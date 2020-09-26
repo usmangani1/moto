@@ -794,6 +794,14 @@ def test_describe_classic_link_dns_support_enabled():
 
 
 @mock_ec2
+def test_create_vpc_with_tags():
+    ec2 = boto3.resource("ec2", region_name="us-west-1")
+    # Create VPC
+    vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16", TagSpecifications=[{"ResourceType":"vpc", "Tags":[{"Key":"name", "Value":"some-vpc"}]}])
+    assert vpc.tags == [{'Key': 'name', 'Value': 'some-vpc'}]
+
+
+@mock_ec2
 def test_describe_classic_link_dns_support_disabled():
     ec2 = boto3.resource("ec2", region_name="us-west-1")
 

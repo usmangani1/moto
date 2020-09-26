@@ -2682,6 +2682,8 @@ class VPCBackend(object):
         cidr_block,
         instance_tenancy="default",
         amazon_provided_ipv6_cidr_block=False,
+        tags=[],
+
     ):
         vpc_id = random_vpc_id()
         try:
@@ -2700,6 +2702,12 @@ class VPCBackend(object):
             instance_tenancy,
             amazon_provided_ipv6_cidr_block,
         )
+        for tag in tags:
+            print("tag data", tag)
+            tag_key = tag.get("Key")
+            tag_value = tag.get("Value")
+            vpc.add_tag(tag_key, tag_value)
+
         self.vpcs[vpc_id] = vpc
 
         # AWS creates a default main route table and security group.
@@ -3099,7 +3107,15 @@ class SubnetBackend(object):
                 return subnets[subnet_id]
         raise InvalidSubnetIdError(subnet_id)
 
-    def create_subnet(self, vpc_id, cidr_block, availability_zone, context=None):
+    def create_subnet(
+        self,
+        vpc_id,
+        cidr_block,
+        availability_zone=None,
+        availability_zone_id=None,
+        context=None,
+        tags=[]
+    ):
         subnet_id = random_subnet_id()
         vpc = self.get_vpc(
             vpc_id
@@ -3158,6 +3174,12 @@ class SubnetBackend(object):
             owner_id=context.get_current_user() if context else OWNER_ID,
             assign_ipv6_address_on_creation=False,
         )
+
+        for tag in tags:
+            print("tag data", tag)
+            tag_key = tag.get("Key")
+            tag_value = tag.get("Value")
+            subnet.add_tag(tag_key, tag_value)
 
         # AWS associates a new subnet with the default Network ACL
         self.associate_default_network_acl_with_subnet(subnet_id, vpc_id)

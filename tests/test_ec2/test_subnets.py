@@ -76,6 +76,34 @@ def test_subnet_should_have_proper_availability_zone_set():
 
 
 @mock_ec2
+def test_availability_zone_in_create_subnet():
+    ec2 = boto3.resource("ec2", region_name="us-west-1")
+
+    vpc = ec2.create_vpc(CidrBlock="172.31.0.0/16")
+
+    subnet = ec2.create_subnet(
+        VpcId=vpc.id, CidrBlock="172.31.48.0/20", AvailabilityZoneId="use1-az6"
+    )
+    subnet.availability_zone_id.should.equal("use1-az6")
+
+
+@mock_ec2
+def test_create_subnet_with_tags():
+    ec2 = boto3.resource("ec2", region_name="us-west-1")
+
+    vpc = ec2.create_vpc(CidrBlock="172.31.0.0/16")
+
+    subnet = ec2.create_subnet(
+        VpcId=vpc.id, CidrBlock="172.31.48.0/20", AvailabilityZoneId="use1-az6",
+        TagSpecifications=[{"ResourceType": "subnet", "Tags": [{"Key": "name", "Value": "some-vpc"}]}]
+    )
+
+    print(subnet)
+
+    assert subnet.tags == [{'Key': 'name', 'Value': 'some-vpc'}]
+
+
+@mock_ec2
 def test_default_subnet():
     ec2 = boto3.resource("ec2", region_name="us-west-1")
 
