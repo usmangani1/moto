@@ -86,6 +86,7 @@ class HealthCheck(CloudFormationModel):
 
 class RecordSet(CloudFormationModel):
     def __init__(self, kwargs):
+        self.id = create_route53_zone_id()
         self.name = kwargs.get("Name")
         self.type_ = kwargs.get("Type")
         self.ttl = kwargs.get("TTL")
@@ -253,7 +254,7 @@ class FakeZone(CloudFormationModel):
             record_set
             for record_set in self.rrsets
             if record_set.name != rrset["Name"]
-            or (rrset.get("Type") is not None and record_set.type_ != rrset["Type"])
+               or (rrset.get("Type") is not None and record_set.type_ != rrset["Type"])
         ]
 
     def delete_rrset_by_id(self, set_identifier):

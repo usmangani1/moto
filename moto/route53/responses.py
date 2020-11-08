@@ -117,11 +117,11 @@ class Route53(BaseResponse):
                         "Changes"
                     ]["Change"]
                 ]
-
+            # default change ID which is being used earlier in the template
+            change_id = "C2682N5HXP0BZ4"
             for value in change_list:
                 action = value["Action"]
                 record_set = value["ResourceRecordSet"]
-
                 cleaned_record_name = record_set["Name"].strip(".")
                 cleaned_hosted_zone_name = the_zone.name.strip(".")
 
@@ -151,16 +151,19 @@ class Route53(BaseResponse):
                             x["Value"] for x in resource_records
                         ]
                     if action == "CREATE":
-                        the_zone.add_rrset(record_set)
+                        record_set = the_zone.add_rrset(record_set)
+                        change_id = record_set.id
                     else:
-                        the_zone.upsert_rrset(record_set)
+                        record_set = the_zone.upsert_rrset(record_set)
+                        change_id = record_set.id
                 elif action == "DELETE":
                     if "SetIdentifier" in record_set:
                         the_zone.delete_rrset_by_id(record_set["SetIdentifier"])
                     else:
                         the_zone.delete_rrset(record_set)
 
-            return 200, headers, CHANGE_RRSET_RESPONSE
+            template = Template(CHANGE_RRSET_RESPONSE)
+            return 200, headers, template.render(changeId=change_id)
 
         elif method == "GET":
             querystring = parse_qs(parsed_url.query)
@@ -213,6 +216,23 @@ class Route53(BaseResponse):
         raise NotImplementedError(
             "The action for {0} has not been implemented for route 53".format(action)
         )
+
+    def get_change_details(self, request, full_url, headers):
+        self.setup_class(request, full_url, headers)
+        parsed_url = urlparse(full_url)
+        change_id = parsed_url.path.rstrip("/").rsplit("/", 2)[2]
+        zones = route53_backend.get_all_hosted_zones()
+        valid = False
+        for zone in zones:
+            records_sets = zone.rrsets
+            for record_set in records_sets:
+                if record_set.id == change_id:
+                    valid = True
+        if not valid:
+            return 404, headers, "NoSuchChange {0}".format(change_id)
+
+        template = Template(CHANGE_RRSET_RESPONSE)
+        return 200, headers, template.render(changeId=change_id)
 
     def list_or_change_tags_for_resource_request(self, request, full_url, headers):
         self.setup_class(request, full_url, headers)
@@ -278,7 +298,7 @@ CHANGE_RRSET_RESPONSE = """<ChangeResourceRecordSetsResponse xmlns="https://rout
    <ChangeInfo>
       <Status>INSYNC</Status>
       <SubmittedAt>2010-09-10T01:36:41.958Z</SubmittedAt>
-      <Id>/change/C2682N5HXP0BZ4</Id>
+      <Id>/change/{{ changeId }}</Id>
    </ChangeInfo>
 </ChangeResourceRecordSetsResponse>"""
 

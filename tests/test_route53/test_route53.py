@@ -792,7 +792,7 @@ def test_geolocation_record_sets():
     hosted_zone_id = zones["HostedZones"][0]["Id"]
 
     # Create geolocation record
-    conn.change_resource_record_sets(
+    response = conn.change_resource_record_sets(
         HostedZoneId=hosted_zone_id,
         ChangeBatch={
             "Changes": [
@@ -943,3 +943,33 @@ def test_list_resource_record_sets_name_type_filters():
     len(returned_records).should.equal(len(all_records) - start_with)
     for desired_record in all_records[start_with:]:
         returned_records.should.contain(desired_record)
+
+
+@mock_route53
+def test_get_change_record_set():
+    conn = boto3.client("route53", region_name="us-east-1")
+    conn.create_hosted_zone(Name="test.zone.", CallerReference=str(hash("test")))
+    zones = conn.list_hosted_zones_by_name(DNSName="test.zone.")
+    hosted_zone_id = zones["HostedZones"][0]["Id"]
+
+    # Create geolocation record
+    response = conn.change_resource_record_sets(
+        HostedZoneId=hosted_zone_id,
+        ChangeBatch={
+            "Changes": [
+                {
+                    "Action": "CREATE",
+                    "ResourceRecordSet": {
+                        "Name": "failover.test.zone.",
+                        "Type": "A",
+                        "TTL": 10,
+                        "ResourceRecords": [{"Value": "127.0.0.1"}],
+                    },
+                }
+            ]
+        },
+    )
+
+    change_id = response.get('ChangeInfo').get('Id').split('/')[2]
+    response = conn.get_change(Id=change_id)
+    print(response, change_id)
