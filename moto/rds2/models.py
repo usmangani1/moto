@@ -29,6 +29,18 @@ from .exceptions import (
 
 
 class Database(CloudFormationModel):
+    default_engine_versions = {
+        "MySQL": "5.6.21",
+        "mysql": "5.6.21",
+        "oracle-se1": "11.2.0.4.v3",
+        "oracle-se": "11.2.0.4.v3",
+        "oracle-ee": "11.2.0.4.v3",
+        "sqlserver-ee": "11.00.2100.60.v1",
+        "sqlserver-se": "11.00.2100.60.v1",
+        "sqlserver-ex": "11.00.2100.60.v1",
+        "sqlserver-web": "11.00.2100.60.v1",
+        "postgres": "9.3.3",
+    }
     def __init__(self, **kwargs):
         self.status = "available"
         self.is_replica = False
@@ -36,18 +48,6 @@ class Database(CloudFormationModel):
         self.region = kwargs.get("region")
         self.engine = kwargs.get("engine")
         self.engine_version = kwargs.get("engine_version", None)
-        self.default_engine_versions = {
-            "MySQL": "5.6.21",
-            "mysql": "5.6.21",
-            "oracle-se1": "11.2.0.4.v3",
-            "oracle-se": "11.2.0.4.v3",
-            "oracle-ee": "11.2.0.4.v3",
-            "sqlserver-ee": "11.00.2100.60.v1",
-            "sqlserver-se": "11.00.2100.60.v1",
-            "sqlserver-ex": "11.00.2100.60.v1",
-            "sqlserver-web": "11.00.2100.60.v1",
-            "postgres": "9.3.3",
-        }
         if not self.engine_version and self.engine in self.default_engine_versions:
             self.engine_version = self.default_engine_versions[self.engine]
         self.iops = kwargs.get("iops")
@@ -106,6 +106,7 @@ class Database(CloudFormationModel):
         self.db_parameter_group_name = kwargs.get("db_parameter_group_name")
         if (
             self.db_parameter_group_name
+            and not self.is_default_parameter_group(self.db_parameter_group_name)
             and self.db_parameter_group_name
             not in rds2_backends[self.region].db_parameter_groups
         ):
@@ -146,7 +147,7 @@ class Database(CloudFormationModel):
         return self.db_instance_identifier
 
     def db_parameter_groups(self):
-        if not self.db_parameter_group_name:
+        if not self.db_parameter_group_name or self.is_default_parameter_group(self.db_parameter_group_name):
             (
                 db_family,
                 db_parameter_group_name,
@@ -167,6 +168,9 @@ class Database(CloudFormationModel):
                     self.db_parameter_group_name
                 ]
             ]
+
+    def is_default_parameter_group(self, param_group_name):
+        return param_group_name.startswith('default.%s' % self.engine.lower())
 
     def default_db_parameter_group_details(self):
         if not self.engine_version:
