@@ -42,6 +42,7 @@ from .exceptions import (
     ModelNotFound,
 )
 from ..core.models import responses_mock
+from moto.apigateway.exceptions import MethodNotFoundException
 
 STAGE_URL = "https://{api_id}.execute-api.{region_name}.amazonaws.com/{stage_name}"
 
@@ -53,6 +54,16 @@ class Deployment(BaseModel, dict):
         self["stageName"] = name
         self["description"] = description
         self["createdDate"] = int(time.time())
+
+    @classmethod
+    def create_from_cloudformation_json(cls, resource_name, cloudformation_json, region_name):
+        properties = cloudformation_json['Properties']
+        spec = {
+            'deployment_id': create_id(),
+            'name': properties['StageName'],
+            'description': properties.get('Description')
+        }
+        return Deployment(**spec)
 
 
 class IntegrationResponse(BaseModel, dict):
@@ -133,6 +144,15 @@ class Method(BaseModel, dict):
     def delete_response(self, response_code):
         return self.method_responses.pop(response_code)
 
+    @classmethod
+    def create_from_cloudformation_json(cls, resource_name, cloudformation_json, region_name):
+        properties = cloudformation_json['Properties']
+        spec = {
+            'method_type': properties['HttpMethod'],
+            'authorization_type': properties['AuthorizationType']
+        }
+        return Method(**spec)
+
 
 class Resource(BaseModel):
     def __init__(self, id, region_name, api_id, path_part, parent_id):
@@ -193,22 +213,38 @@ class Resource(BaseModel):
         return method
 
     def get_method(self, method_type):
-        return self.resource_methods[method_type]
+        method = self.resource_methods.get(method_type)
+        if not method:
+            raise MethodNotFoundException()
+        return method
 
     def add_integration(
-        self, method_type, integration_type, uri, request_templates=None
+        self, method_type, integration_type, uri, request_templates=None, integration_method=None
     ):
+        integration_method = integration_method or method_type
         integration = Integration(
-            integration_type, uri, method_type, request_templates=request_templates
+            integration_type, uri, integration_method, request_templates=request_templates
         )
         self.resource_methods[method_type]["methodIntegration"] = integration
         return integration
 
     def get_integration(self, method_type):
-        return self.resource_methods[method_type]["methodIntegration"]
+        return self.resource_methods.get(method_type, {}).get('methodIntegration')
 
     def delete_integration(self, method_type):
         return self.resource_methods[method_type].pop("methodIntegration")
+
+    @classmethod
+    def create_from_cloudformation_json(cls, resource_name, cloudformation_json, region_name):
+        properties = cloudformation_json['Properties']
+        spec = {
+            'id': create_id(),
+            'region_name': 'us-east-1',
+            'api_id': properties['RestApiId'],
+            'path_part': properties['PathPart'],
+            'parent_id': properties['ParentId']
+        }
+        return Resource(**spec)
 
 
 class Authorizer(BaseModel, dict):
@@ -280,7 +316,6 @@ class Stage(BaseModel, dict):
         self["cacheClusterEnabled"] = cacheClusterEnabled
         if self["cacheClusterEnabled"]:
             self["cacheClusterSize"] = str(0.5)
-
         if cacheClusterSize is not None:
             self["cacheClusterSize"] = str(cacheClusterSize)
 
@@ -656,6 +691,26 @@ class RestAPI(BaseModel):
     def delete_deployment(self, deployment_id):
         return self.deployments.pop(deployment_id)
 
+    def get_cfn_attribute(self, attribute_name):
+        from moto.cloudformation.exceptions import UnformattedGetAttTemplateException
+        if attribute_name == 'RootResourceId':
+            for res_id, res_obj in self.resources.items():
+                if res_obj.path_part == '/' and not res_obj.parent_id:
+                    return res_id
+            raise Exception('Unable to find root resource for API %s' % self)
+        raise UnformattedGetAttTemplateException()
+
+    @classmethod
+    def create_from_cloudformation_json(cls, resource_name, cloudformation_json, region_name):
+        properties = cloudformation_json['Properties']
+        spec = {
+            'id': create_id(),
+            'region_name': 'us-east-1',
+            'name': properties['Name'],
+            'description': properties.get('Description')
+        }
+        return RestAPI(**spec)
+
 
 class DomainName(BaseModel, dict):
     def __init__(self, domain_name, **kwargs):
@@ -845,8 +900,7 @@ class APIGatewayBackend(BaseBackend):
         stage = api.stages.get(stage_name)
         if stage is None:
             raise StageNotFoundException()
-        else:
-            return stage
+        return stage
 
     def get_stages(self, function_id):
         api = self.get_rest_api(function_id)
@@ -947,7 +1001,7 @@ class APIGatewayBackend(BaseBackend):
         ):
             raise InvalidIntegrationArn()
         integration = resource.add_integration(
-            method_type, integration_type, uri, request_templates=request_templates
+            method_type, integration_type, uri, integration_method=integration_method, request_templates=request_templates
         )
         return integration
 
@@ -1000,7 +1054,9 @@ class APIGatewayBackend(BaseBackend):
         methods = [
             list(res.resource_methods.values())
             for res in self.list_resources(function_id)
-        ][0]
+        ]
+        # flatten list (fixes an issue in upstream moto)
+        methods = [item for sublist in methods for item in sublist]
         if not any(methods):
             raise NoMethodDefined()
         method_integrations = [

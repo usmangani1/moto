@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import json
 import yaml
 import uuid
+import boto3
 
 from boto3 import Session
 
@@ -232,10 +233,13 @@ class FakeStack(BaseModel):
         self.tags = tags if tags else {}
         self.events = []
         if create_change_set:
+            self.status = "REVIEW_IN_PROGRESS"
             self._add_stack_event(
                 "REVIEW_IN_PROGRESS", resource_status_reason="User Initiated"
             )
+            self.status = "REVIEW_IN_PROGRESS"
         else:
+            self.status = "CREATE_IN_PROGRESS"
             self._add_stack_event(
                 "CREATE_IN_PROGRESS", resource_status_reason="User Initiated"
             )
@@ -246,10 +250,14 @@ class FakeStack(BaseModel):
         if create_change_set:
             self.status = "CREATE_COMPLETE"
             self.execution_status = "AVAILABLE"
-        else:
-            self.create_resources()
-            self._add_stack_event("CREATE_COMPLETE")
         self.creation_time = datetime.utcnow()
+
+    def initialize_resources(self):
+        self.resource_map.load()
+        self.resource_map.create(self.template_dict)
+        self.output_map.create()
+        self._add_stack_event("CREATE_COMPLETE")
+        self.status = "CREATE_COMPLETE"
 
     def _create_resource_map(self):
         resource_map = ResourceMap(
@@ -261,12 +269,15 @@ class FakeStack(BaseModel):
             self.template_dict,
             self.cross_stack_resources,
         )
-        resource_map.load()
+        # Note: resource initialization removed from here and moved into initialize_resources() instead
+        # resource_map.load()
+        # resource_map.create()
         return resource_map
 
     def _create_output_map(self):
         output_map = OutputMap(self.resource_map, self.template_dict, self.stack_id)
-        output_map.create()
+        # Note: resource initialization removed from here and moved into initialize_resources() instead
+        # output_map.create()
         return output_map
 
     @property
@@ -333,12 +344,6 @@ class FakeStack(BaseModel):
     @property
     def exports(self):
         return self.output_map.exports
-
-    def create_resources(self):
-        self.resource_map.create(self.template_dict)
-        # Set the description of the stack
-        self.description = self.template_dict.get("Description")
-        self.status = "CREATE_COMPLETE"
 
     def update(self, template, role_arn=None, parameters=None, tags=None):
         self._add_stack_event(
@@ -563,7 +568,7 @@ class CloudFormationBackend(BaseBackend):
         role_arn=None,
         create_change_set=False,
     ):
-        stack_id = generate_stack_id(name)
+        stack_id = generate_stack_id(name, region=region_name)
         new_stack = FakeStack(
             stack_id=stack_id,
             name=name,
@@ -577,10 +582,18 @@ class CloudFormationBackend(BaseBackend):
             create_change_set=create_change_set,
         )
         self.stacks[stack_id] = new_stack
+
+        # Note: we're first adding the new stack to self.stacks, then initialize its resources
+        new_stack.initialize_resources()
+
         self._validate_export_uniqueness(new_stack)
+        # Note: disable setting the exports here - done instead after the deployment loop has finished
+        # self.set_exports(new_stack)
+        return new_stack
+
+    def set_exports(self, new_stack):
         for export in new_stack.exports:
             self.exports[export.name] = export
-        return new_stack
 
     def create_change_set(
         self,
@@ -670,7 +683,7 @@ class CloudFormationBackend(BaseBackend):
         else:
             stack._add_stack_event("UPDATE_IN_PROGRESS")
             stack._add_stack_event("UPDATE_COMPLETE")
-        stack.create_resources()
+        stack.initialize_resources()
         return True
 
     def describe_stacks(self, name_or_stack_id):
@@ -721,10 +734,11 @@ class CloudFormationBackend(BaseBackend):
     def delete_stack(self, name_or_stack_id):
         if name_or_stack_id in self.stacks:
             # Delete by stack id
-            stack = self.stacks.pop(name_or_stack_id, None)
+            stack = self.stacks.pop(name_or_stack_id)
+            # Note: make sure the exports are removed before the stack is deleted
+            [self.exports.pop(export.name) for export in stack.exports]
             stack.delete()
             self.deleted_stacks[stack.stack_id] = stack
-            [self.exports.pop(export.name) for export in stack.exports]
             return self.stacks.pop(name_or_stack_id, None)
         else:
             # Delete by stack name
