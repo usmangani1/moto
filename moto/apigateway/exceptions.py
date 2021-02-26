@@ -190,3 +190,10 @@ class MethodNotFoundException(RESTError):
     def __init__(self):
         super(MethodNotFoundException, self).__init__(
             "NotFoundException", "Invalid method properties specified")
+class ApiKeyValueMinLength(RESTError):
+    code = 400
+
+    def __init__(self):
+        super(ApiKeyValueMinLength, self).__init__(
+            "BadRequestException", "API Key value should be at least 20 characters"
+        )

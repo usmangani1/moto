@@ -472,6 +472,28 @@ class CloudFormationBackend(BaseBackend):
         self.exports = OrderedDict()
         self.change_sets = OrderedDict()
 
+    def _resolve_update_parameters(self, instance, incoming_params):
+        parameters = dict(
+            [
+                (parameter["parameter_key"], parameter["parameter_value"])
+                for parameter in incoming_params
+                if "parameter_value" in parameter
+            ]
+        )
+        previous = dict(
+            [
+                (
+                    parameter["parameter_key"],
+                    instance.parameters[parameter["parameter_key"]],
+                )
+                for parameter in incoming_params
+                if "use_previous_value" in parameter
+            ]
+        )
+        parameters.update(previous)
+
+        return parameters
+
     def create_stack_set(
         self,
         name,
@@ -499,6 +521,8 @@ class CloudFormationBackend(BaseBackend):
 
     def get_stack_set(self, name):
         stacksets = self.stacksets.keys()
+        if name in stacksets:
+            return self.stacksets[name]
         for stackset in stacksets:
             if self.stacksets[stackset].name == name:
                 return self.stacksets[stackset]
@@ -506,6 +530,8 @@ class CloudFormationBackend(BaseBackend):
 
     def delete_stack_set(self, name):
         stacksets = self.stacksets.keys()
+        if name in stacksets:
+            self.stacksets[name].delete()
         for stackset in stacksets:
             if self.stacksets[stackset].name == name:
                 self.stacksets[stackset].delete()
@@ -537,10 +563,13 @@ class CloudFormationBackend(BaseBackend):
         operation_id=None,
     ):
         stackset = self.get_stack_set(stackset_name)
+        resolved_parameters = self._resolve_update_parameters(
+            instance=stackset, incoming_params=parameters
+        )
         update = stackset.update(
             template=template,
             description=description,
-            parameters=parameters,
+            parameters=resolved_parameters,
             tags=tags,
             admin_role=admin_role,
             execution_role=execution_role,
@@ -724,7 +753,10 @@ class CloudFormationBackend(BaseBackend):
 
     def update_stack(self, name, template, role_arn=None, parameters=None, tags=None):
         stack = self.get_stack(name)
-        stack.update(template, role_arn, parameters=parameters, tags=tags)
+        resolved_parameters = self._resolve_update_parameters(
+            instance=stack, incoming_params=parameters
+        )
+        stack.update(template, role_arn, parameters=resolved_parameters, tags=tags)
         return stack
 
     def list_stack_resources(self, stack_name_or_id):

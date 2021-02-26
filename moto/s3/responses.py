@@ -1,5 +1,6 @@
 from __future__ import unicode_literals
 
+import os
 import re
 import sys
 
@@ -11,7 +12,14 @@ from moto.core.utils import (
     py2_strip_unicode_keys,
     unix_time_millis,
 )
-from six.moves.urllib.parse import parse_qs, urlparse, unquote, parse_qsl
+from six.moves.urllib.parse import (
+    parse_qs,
+    parse_qsl,
+    urlparse,
+    unquote,
+    urlencode,
+    urlunparse,
+)
 
 import xmltodict
 
@@ -859,10 +867,28 @@ class ResponseObject(_TemplateEnvironmentMixin, ActionAuthenticatorMixin):
         if "file" in form:
             f = form["file"]
         else:
-            f = request.files["file"].stream.read()
+            fobj = request.files["file"]
+            f = fobj.stream.read()
+            key = key.replace("${filename}", os.path.basename(fobj.filename))
 
         if "success_action_redirect" in form:
-            response_headers["Location"] = form["success_action_redirect"]
+            redirect = form["success_action_redirect"]
+            parts = urlparse(redirect)
+            queryargs = parse_qs(parts.query)
+            queryargs["key"] = key
+            queryargs["bucket"] = bucket_name
+            redirect_queryargs = urlencode(queryargs, doseq=True)
+            newparts = (
+                parts.scheme,
+                parts.netloc,
+                parts.path,
+                parts.params,
+                redirect_queryargs,
+                parts.fragment,
+            )
+            fixed_redirect = urlunparse(newparts)
+
+            response_headers["Location"] = fixed_redirect
 
         if "success_action_status" in form:
             status_code = form["success_action_status"]
@@ -1767,8 +1793,15 @@ class ResponseObject(_TemplateEnvironmentMixin, ActionAuthenticatorMixin):
             key.set_metadata(multipart.metadata)
 
             template = self.response_template(S3_MULTIPART_COMPLETE_RESPONSE)
-            return template.render(
-                bucket_name=bucket_name, key_name=key.name, etag=key.etag
+            headers = {}
+            if key.version_id:
+                headers["x-amz-version-id"] = key.version_id
+            return (
+                200,
+                headers,
+                template.render(
+                    bucket_name=bucket_name, key_name=key.name, etag=key.etag
+                ),
             )
 
         elif 'restore' in query:
