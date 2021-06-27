@@ -1,5 +1,5 @@
 from __future__ import unicode_literals
-from moto.core.exceptions import RESTError
+from moto.core.exceptions import JsonRESTError as RESTError
 
 
 class BadRequestException(RESTError):
@@ -71,10 +71,17 @@ class InvalidRequestInput(BadRequestException):
         )
 
 
-class NoIntegrationDefined(BadRequestException):
+class NoIntegrationDefined(RESTError):
     def __init__(self):
         super(NoIntegrationDefined, self).__init__(
-            "BadRequestException", "No integration defined for method"
+            "NotFoundException", "No integration defined for method"
+        )
+
+
+class NoIntegrationResponseDefined(BadRequestException):
+    def __init__(self, code=None):
+        super(NoIntegrationResponseDefined, self).__init__(
+            "BadRequestException", "No integration defined for method, code '%s'" % code
         )
 
 
@@ -191,3 +198,11 @@ class ApiKeyValueMinLength(RESTError):
         super(ApiKeyValueMinLength, self).__init__(
             "BadRequestException", "API Key value should be at least 20 characters"
         )
+
+
+class MethodNotFoundException(RESTError):
+    code = 404
+
+    def __init__(self):
+        super(MethodNotFoundException, self).__init__(
+            "NotFoundException", "Invalid method properties specified")

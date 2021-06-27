@@ -61,7 +61,7 @@ from .models import (
     FakeGrant,
     FakeAcl,
     FakeKey,
-)
+    FakeMultipart)
 from .utils import (
     bucket_name_from_url,
     clean_key_name,
@@ -943,13 +943,10 @@ class ResponseObject(_TemplateEnvironmentMixin, ActionAuthenticatorMixin):
             key_name = object_["Key"]
             version_id = object_.get("VersionId", None)
 
-            success, _ = self.backend.delete_object(
+            self.backend.delete_object(
                 bucket_name, undo_clean_key_name(key_name), version_id=version_id
             )
-            if success:
-                deleted_objects.append((key_name, version_id))
-            else:
-                error_names.append(key_name)
+            deleted_objects.append((key_name, version_id))
 
         return (
             200,
@@ -1513,6 +1510,7 @@ class ResponseObject(_TemplateEnvironmentMixin, ActionAuthenticatorMixin):
 
         grants = []
         for header, value in headers.items():
+            header = header.lower()
             if not header.startswith("x-amz-grant-"):
                 continue
 
@@ -1527,7 +1525,7 @@ class ResponseObject(_TemplateEnvironmentMixin, ActionAuthenticatorMixin):
             grantees = []
             for key_and_value in value.split(","):
                 key, value = re.match(
-                    '([^=]+)="([^"]+)"', key_and_value.strip()
+                    '([^=]+)="?([^"]+)"?', key_and_value.strip()
                 ).groups()
                 if key.lower() == "id":
                     grantees.append(FakeGrantee(id=value))
@@ -1767,9 +1765,13 @@ class ResponseObject(_TemplateEnvironmentMixin, ActionAuthenticatorMixin):
         self._set_action("KEY", "POST", query)
         self._authenticate_and_authorize_s3_action()
 
-        if body == b"" and "uploads" in query:
+        if body == b'' and 'uploads' in query:
             metadata = metadata_from_headers(request.headers)
-            multipart = self.backend.initiate_multipart(bucket_name, key_name, metadata)
+            multipart = FakeMultipart(key_name, metadata)
+            multipart.storage = request.headers.get('x-amz-storage-class', 'STANDARD')
+
+            bucket = self.backend.get_bucket(bucket_name)
+            bucket.multiparts[multipart.id] = multipart
 
             template = self.response_template(S3_MULTIPART_INITIATE_RESPONSE)
             response = template.render(
@@ -1777,10 +1779,23 @@ class ResponseObject(_TemplateEnvironmentMixin, ActionAuthenticatorMixin):
             )
             return 200, {}, response
 
-        if query.get("uploadId"):
+        if query.get('uploadId'):
             body = self._complete_multipart_body(body)
-            upload_id = query["uploadId"][0]
-            key = self.backend.complete_multipart(bucket_name, upload_id, body)
+            multipart_id = query['uploadId'][0]
+
+            bucket = self.backend.get_bucket(bucket_name)
+            multipart = bucket.multiparts[multipart_id]
+            value, etag = multipart.complete(body)
+            if value is None:
+                return 400, {}, ''
+
+            del bucket.multiparts[multipart_id]
+
+            key = self.backend.set_object(
+                bucket_name, multipart.key_name, value, storage=multipart.storage, etag=etag, multipart=multipart
+            )
+            key.set_metadata(multipart.metadata)
+
             template = self.response_template(S3_MULTIPART_COMPLETE_RESPONSE)
             headers = {}
             if key.version_id:
@@ -1792,18 +1807,20 @@ class ResponseObject(_TemplateEnvironmentMixin, ActionAuthenticatorMixin):
                     bucket_name=bucket_name, key_name=key.name, etag=key.etag
                 ),
             )
-        elif "restore" in query:
-            es = minidom.parseString(body).getElementsByTagName("Days")
+
+        elif 'restore' in query:
+            es = minidom.parseString(body).getElementsByTagName('Days')
             days = es[0].childNodes[0].wholeText
             key = self.backend.get_object(bucket_name, key_name)
             r = 202
             if key.expiry_date is not None:
                 r = 200
             key.restore(int(days))
-            return r, {}, ""
+            return r, {}, ''
+
         else:
             raise NotImplementedError(
-                "Method POST had only been implemented for multipart uploads and restore operations, so far"
+                'Method POST had only been implemented for multipart uploads and restore operations, so far'
             )
 
     def _invalid_headers(self, url, headers):
@@ -2241,7 +2258,7 @@ S3_ALL_MULTIPARTS = (
   <KeyMarker></KeyMarker>
   <UploadIdMarker></UploadIdMarker>
   <MaxUploads>1000</MaxUploads>
-  <IsTruncated>False</IsTruncated>
+  <IsTruncated>false</IsTruncated>
   {% for upload in uploads %}
   <Upload>
     <Key>{{ upload.key_name }}</Key>
@@ -2359,7 +2376,7 @@ S3_NO_LOGGING_CONFIG = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 S3_ENCRYPTION_CONFIG = """<?xml version="1.0" encoding="UTF-8"?>
-<BucketEncryptionStatus xmlns="http://doc.s3.amazonaws.com/2006-03-01">
+<ServerSideEncryptionConfiguration xmlns="http://doc.s3.amazonaws.com/2006-03-01">
     {% for entry in encryption %}
         <Rule>
             <ApplyServerSideEncryptionByDefault>
@@ -2368,9 +2385,10 @@ S3_ENCRYPTION_CONFIG = """<?xml version="1.0" encoding="UTF-8"?>
                 <KMSMasterKeyID>{{ entry["Rule"]["ApplyServerSideEncryptionByDefault"]["KMSMasterKeyID"] }}</KMSMasterKeyID>
                 {% endif %}
             </ApplyServerSideEncryptionByDefault>
+            <BucketKeyEnabled>{{ 'true' if entry["Rule"].get("BucketKeyEnabled") else 'false' }}</BucketKeyEnabled>
         </Rule>
     {% endfor %}
-</BucketEncryptionStatus>
+</ServerSideEncryptionConfiguration>
 """
 
 S3_INVALID_PRESIGNED_PARAMETERS = """<?xml version="1.0" encoding="UTF-8"?>

@@ -478,6 +478,7 @@ class Queue(CloudFormationModel):
 
     @property
     def messages(self):
+        # TODO: This can become very inefficient if a large number of messages are in-flight
         return [
             message
             for message in self._messages
@@ -635,7 +636,8 @@ class SQSBackend(BaseBackend):
         queue = self.get_queue(queue_name)
 
         if not len(attribute_names):
-            attribute_names.append("All")
+            # if attribute names are not specified this should return empty
+            return {}
 
         valid_names = (
             ["All"]
@@ -826,7 +828,7 @@ class SQSBackend(BaseBackend):
                         continue
 
                 if (
-                    queue.dead_letter_queue is not None
+                    queue.dead_letter_queue is not None and queue.redrive_policy
                     and message.approximate_receive_count
                     >= queue.redrive_policy["maxReceiveCount"]
                 ):

@@ -250,8 +250,12 @@ class TaggedEC2Resource(BaseModel):
             return [tag["key"] for tag in tags]
         elif filter_name == "tag-value":
             return [tag["value"] for tag in tags]
-        else:
-            raise FilterNotImplementedError(filter_name, method_name)
+
+        value = getattr(self, filter_name.lower().replace('-', '_'), None)
+        if value is not None:
+            return [value]
+
+        raise FilterNotImplementedError(filter_name, method_name)
 
 
 class NetworkInterface(TaggedEC2Resource, CloudFormationModel):
@@ -2016,7 +2020,7 @@ class SecurityRule(object):
 
 
 class SecurityGroup(TaggedEC2Resource, CloudFormationModel):
-    def __init__(self, ec2_backend, group_id, name, description, vpc_id=None):
+    def __init__(self, ec2_backend, group_id, name, description, vpc_id=None, tags=None):
         self.ec2_backend = ec2_backend
         self.id = group_id
         self.name = name
@@ -2028,6 +2032,7 @@ class SecurityGroup(TaggedEC2Resource, CloudFormationModel):
         self.enis = {}
         self.vpc_id = vpc_id
         self.owner_id = OWNER_ID
+        self.add_tags(tags or {})
 
         # Append default IPv6 egress rule for VPCs with IPv6 support
         if vpc_id:
@@ -2105,7 +2110,7 @@ class SecurityGroup(TaggedEC2Resource, CloudFormationModel):
             security_group.delete(region_name)
 
     def delete(self, region_name):
-        """ Not exposed as part of the ELB API - used for CloudFormation. """
+        """Not exposed as part of the ELB API - used for CloudFormation."""
         self.ec2_backend.delete_security_group(group_id=self.id)
 
     @property
@@ -2189,7 +2194,7 @@ class SecurityGroupBackend(object):
 
         super(SecurityGroupBackend, self).__init__()
 
-    def create_security_group(self, name, description, vpc_id=None, force=False):
+    def create_security_group(self, name, description, vpc_id=None, tags=None, force=False):
         if not description:
             raise MissingParameterError("GroupDescription")
 
@@ -2198,7 +2203,7 @@ class SecurityGroupBackend(object):
             existing_group = self.get_security_group_from_name(name, vpc_id)
             if existing_group:
                 raise InvalidSecurityGroupDuplicateError(name)
-        group = SecurityGroup(self, group_id, name, description, vpc_id=vpc_id)
+        group = SecurityGroup(self, group_id, name, description, vpc_id=vpc_id, tags=tags)
 
         self.groups[vpc_id][group_id] = group
         return group
@@ -3054,10 +3059,12 @@ class VPC(TaggedEC2Resource, CloudFormationModel):
         ).get("cidr_block"):
             raise OperationNotPermitted(association_id)
 
-        response = self.cidr_block_association_set.pop(association_id, {})
-        if response:
+        entry = response = self.cidr_block_association_set.get(association_id, {})
+        if entry:
+            response = json.loads(json.dumps(entry))
             response["vpc_id"] = self.id
             response["cidr_block_state"]["state"] = "disassociating"
+            entry["cidr_block_state"]["state"] = "disassociated"
         return response
 
     def get_cidr_block_association_set(self, ipv6=False):
@@ -3264,6 +3271,7 @@ class VPCBackend(object):
             dns_entries = [dns_entries]
 
         vpc_end_point = VPCEndPoint(
+            self,
             vpc_endpoint_id,
             vpc_id,
             service_name,
@@ -4315,6 +4323,7 @@ class Route(CloudFormationModel):
 class VPCEndPoint(TaggedEC2Resource):
     def __init__(
         self,
+        ec2_backend,
         id,
         vpc_id,
         service_name,
@@ -4329,6 +4338,7 @@ class VPCEndPoint(TaggedEC2Resource):
         tag_specifications=None,
         private_dns_enabled=None,
     ):
+        self.ec2_backend = ec2_backend
         self.id = id
         self.vpc_id = vpc_id
         self.service_name = service_name

@@ -15,6 +15,10 @@ ERROR_WITH_ARGUMENT = """{% extends 'single_error' %}
 <ArgumentValue>{{ value }}</ArgumentValue>{% endblock %}
 """
 
+ERROR_WITH_UPLOADID = """{% extends 'single_error' %}
+{% block extra %}<UploadId>{{ upload_id }}</UploadId>{% endblock %}
+"""
+
 ERROR_WITH_CONDITION_NAME = """{% extends 'single_error' %}
 {% block extra %}<Condition>{{ condition }}</Condition>{% endblock %}
 """
@@ -30,6 +34,19 @@ class S3ClientError(RESTError):
         kwargs.setdefault("template", "single_error")
         self.templates["bucket_error"] = ERROR_WITH_BUCKET_NAME
         super(S3ClientError, self).__init__(*args, **kwargs)
+
+
+class InvalidArgumentError(S3ClientError):
+    code = 400
+
+    def __init__(self, message, name, value, *args, **kwargs):
+        kwargs.setdefault("template", "argument_error")
+        kwargs["name"] = name
+        kwargs["value"] = value
+        self.templates["argument_error"] = ERROR_WITH_ARGUMENT
+        super(InvalidArgumentError, self).__init__(
+            "InvalidArgument", message, *args, **kwargs
+        )
 
 
 class BucketError(S3ClientError):
@@ -418,9 +435,15 @@ class NoSystemTags(S3ClientError):
 class NoSuchUpload(S3ClientError):
     code = 404
 
-    def __init__(self):
+    def __init__(self, upload_id, *args, **kwargs):
+        kwargs.setdefault("template", "error_uploadid")
+        kwargs["upload_id"] = upload_id
+        self.templates["error_uploadid"] = ERROR_WITH_UPLOADID
         super(NoSuchUpload, self).__init__(
-            "NoSuchUpload", "The specified multipart upload does not exist."
+            "NoSuchUpload",
+            "The specified upload does not exist. The upload ID may be invalid, or the upload may have been aborted or completed.",
+            *args,
+            **kwargs
         )
 
 
@@ -460,6 +483,19 @@ class InvalidContinuationToken(S3ClientError):
         super(InvalidContinuationToken, self).__init__(
             "InvalidArgument",
             "The continuation token provided is incorrect",
+            *args,
+            **kwargs
+        )
+
+
+class InvalidFilterRuleName(InvalidArgumentError):
+    code = 400
+
+    def __init__(self, value, *args, **kwargs):
+        super(InvalidFilterRuleName, self).__init__(
+            "filter rule name must be either prefix or suffix",
+            "FilterRule.Name",
+            value,
             *args,
             **kwargs
         )

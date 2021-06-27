@@ -43,6 +43,19 @@ class Database(CloudFormationModel):
         "engine": FilterDef(["engine"], "Engine Names"),
     }
 
+    default_engine_versions = {
+        "MySQL": "5.6.21",
+        "mysql": "5.6.21",
+        "oracle-se1": "11.2.0.4.v3",
+        "oracle-se": "11.2.0.4.v3",
+        "oracle-ee": "11.2.0.4.v3",
+        "sqlserver-ee": "11.00.2100.60.v1",
+        "sqlserver-se": "11.00.2100.60.v1",
+        "sqlserver-ex": "11.00.2100.60.v1",
+        "sqlserver-web": "11.00.2100.60.v1",
+        "postgres": "9.3.3",
+    }
+
     def __init__(self, **kwargs):
         self.status = "available"
         self.is_replica = False
@@ -50,18 +63,6 @@ class Database(CloudFormationModel):
         self.region = kwargs.get("region")
         self.engine = kwargs.get("engine")
         self.engine_version = kwargs.get("engine_version", None)
-        self.default_engine_versions = {
-            "MySQL": "5.6.21",
-            "mysql": "5.6.21",
-            "oracle-se1": "11.2.0.4.v3",
-            "oracle-se": "11.2.0.4.v3",
-            "oracle-ee": "11.2.0.4.v3",
-            "sqlserver-ee": "11.00.2100.60.v1",
-            "sqlserver-se": "11.00.2100.60.v1",
-            "sqlserver-ex": "11.00.2100.60.v1",
-            "sqlserver-web": "11.00.2100.60.v1",
-            "postgres": "9.3.3",
-        }
         if not self.engine_version and self.engine in self.default_engine_versions:
             self.engine_version = self.default_engine_versions[self.engine]
         self.iops = kwargs.get("iops")
@@ -120,6 +121,7 @@ class Database(CloudFormationModel):
         self.db_parameter_group_name = kwargs.get("db_parameter_group_name")
         if (
             self.db_parameter_group_name
+            and not self.is_default_parameter_group(self.db_parameter_group_name)
             and self.db_parameter_group_name
             not in rds2_backends[self.region].db_parameter_groups
         ):
@@ -151,8 +153,8 @@ class Database(CloudFormationModel):
 
     @property
     def db_instance_arn(self):
-        return "arn:aws:rds:{0}:1234567890:db:{1}".format(
-            self.region, self.db_instance_identifier
+        return "arn:aws:rds:{0}:{1}:db:{2}".format(
+            self.region, ACCOUNT_ID, self.db_instance_identifier
         )
 
     @property
@@ -160,7 +162,7 @@ class Database(CloudFormationModel):
         return self.db_instance_identifier
 
     def db_parameter_groups(self):
-        if not self.db_parameter_group_name:
+        if not self.db_parameter_group_name or self.is_default_parameter_group(self.db_parameter_group_name):
             (
                 db_family,
                 db_parameter_group_name,
@@ -181,6 +183,9 @@ class Database(CloudFormationModel):
                     self.db_parameter_group_name
                 ]
             ]
+
+    def is_default_parameter_group(self, param_group_name):
+        return param_group_name.startswith('default.%s' % self.engine.lower())
 
     def default_db_parameter_group_details(self):
         if not self.engine_version:
@@ -551,8 +556,8 @@ class Snapshot(BaseModel):
 
     @property
     def snapshot_arn(self):
-        return "arn:aws:rds:{0}:1234567890:snapshot:{1}".format(
-            self.database.region, self.snapshot_id
+        return "arn:aws:rds:{0}:{1}:snapshot:{2}".format(
+            self.database.region, ACCOUNT_ID, self.snapshot_id
         )
 
     def to_xml(self):
@@ -614,7 +619,7 @@ class SecurityGroup(CloudFormationModel):
         self.ip_ranges = []
         self.ec2_security_groups = []
         self.tags = tags
-        self.owner_id = "1234567890"
+        self.owner_id = ACCOUNT_ID
         self.vpc_id = None
 
     def to_xml(self):

@@ -1,0 +1,28 @@
+[
+    {
+        "Type": "AWS::EC2::HostManagement",
+        "Parameters": [
+            {
+                "Name": "allowed-host-families",
+                "Values": [ "c5", "m5" ]
+            },
+                {
+                    "Name": "any-host-based-license-configuration",
+                    "Values": [ "true" ]
+                }
+        ]
+    },
+    {
+        "Type": "AWS::ResourceGroups::Generic",
+        "Parameters": [
+            {
+                "Name": "allowed-resource-types",
+                "Values": [ "AWS::EC2::Host" ]
+            },
+            {
+                "Name": "deletion-protection",
+                "Values": [ "UNLESS_EMPTY" ]
+            }
+        ]
+    }
+]
